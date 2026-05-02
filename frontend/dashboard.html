@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow — Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <a class="brand" href="/dashboard.html">⚡ TaskFlow</a>
+    <div class="nav-links">
+      <a href="/dashboard.html" class="active"><span>Dashboard</span></a>
+      <a href="/projects.html"><span>Projects</span></a>
+      <a href="/tasks.html"><span>My Tasks</span></a>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;margin-left:12px">
+        <span id="userName"></span>
+        <span id="userRole"></span>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="logout()">Logout</button>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="page-header">
+      <h1 id="welcomeMsg">Dashboard</h1>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="num" id="statProjects">—</div>
+        <div class="lbl">Projects</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" id="statTotal">—</div>
+        <div class="lbl">Total Tasks</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" id="statDone" style="color:var(--success)">—</div>
+        <div class="lbl">Completed</div>
+      </div>
+      <div class="stat-card">
+        <div class="num" id="statOverdue" style="color:var(--danger)">—</div>
+        <div class="lbl">Overdue</div>
+      </div>
+    </div>
+
+    <!-- My Tasks -->
+    <h2 style="margin-bottom:14px; font-size:1.1rem;">My Assigned Tasks</h2>
+    <div style="overflow-x:auto; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);">
+      <table class="task-table">
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Project</th>
+            <th>Status</th>
+            <th>Priority</th>
+            <th>Due Date</th>
+          </tr>
+        </thead>
+        <tbody id="myTasksBody">
+          <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:32px">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const API = "/api";
+    const token = localStorage.getItem("token");
+    if (!token) window.location.href = "/index.html";
+
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    document.getElementById("userName").textContent = user.name || "";
+    document.getElementById("userRole").textContent = user.role || "";
+    document.getElementById("welcomeMsg").textContent = `Welcome back, ${user.name} 👋`;
+
+    function logout() {
+      localStorage.clear();
+      window.location.href = "/index.html";
+    }
+
+    function authHeader() {
+      return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    }
+
+    function formatDate(d) {
+      if (!d) return "—";
+      return new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+    }
+
+    async function loadDashboard() {
+      const [meRes, tasksRes] = await Promise.all([
+        fetch(`${API}/users/me`, { headers: authHeader() }),
+        fetch(`${API}/tasks/my`,  { headers: authHeader() }),
+      ]);
+
+      if (meRes.status === 401) return logout();
+
+      const { stats } = await meRes.json();
+      document.getElementById("statProjects").textContent = stats.projects;
+      document.getElementById("statTotal").textContent    = stats.totalTasks;
+      document.getElementById("statDone").textContent     = stats.doneTasks;
+      document.getElementById("statOverdue").textContent  = stats.overdueTasks;
+
+      const tasks = await tasksRes.json();
+      const tbody = document.getElementById("myTasksBody");
+
+      if (!tasks.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:32px">No tasks assigned yet 🎉</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = tasks.map(t => {
+        const overdue = t.dueDate && new Date(t.dueDate) < new Date() && t.status !== "done";
+        return `<tr>
+          <td>${t.title}</td>
+          <td>${t.project?.name || "—"}</td>
+          <td><span class="badge badge-${t.status}">${t.status.replace("_"," ")}</span></td>
+          <td><span class="badge badge-${t.priority}">${t.priority}</span></td>
+          <td style="color:${overdue ? 'var(--danger)' : 'inherit'}">${formatDate(t.dueDate)} ${overdue ? "⚠️" : ""}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow — Projects</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <nav class="navbar">
+    <a class="brand" href="/dashboard.html">⚡ TaskFlow</a>
+    <div class="nav-links">
+      <a href="/dashboard.html"><span>Dashboard</span></a>
+      <a href="/projects.html" class="active"><span>Projects</span></a>
+      <a href="/tasks.html"><span>My Tasks</span></a>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;margin-left:12px">
+        <span id="userName"></span>
+        <span id="userRole"></span>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="logout()">Logout</button>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="page-header">
+      <h1>Projects</h1>
+      <button class="btn btn-primary" onclick="openModal('createModal')">+ New Project</button>
+    </div>
+    <div class="grid-list" id="projectsList">
+      <p style="color:var(--muted)">Loading...</p>
+    </div>
+  </div>
+
+  <!-- Create Project Modal -->
+  <div class="modal-overlay hidden" id="createModal">
+    <div class="modal">
+      <h2>Create Project</h2>
+      <div class="form-group">
+        <label>Project Name *</label>
+        <input type="text" id="pName" placeholder="e.g. Website Redesign" />
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="pDesc" placeholder="What's this project about?"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('createModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="createProject()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Members Modal -->
+  <div class="modal-overlay hidden" id="membersModal">
+    <div class="modal">
+      <h2>Manage Members</h2>
+      <div class="form-group">
+        <label>Search user by name/email</label>
+        <input type="text" id="memberSearch" placeholder="Type to search..." oninput="searchUsers()" />
+      </div>
+      <div id="searchResults" style="margin-bottom:14px"></div>
+      <h3 style="font-size:.9rem;color:var(--muted);margin-bottom:10px">Current Members</h3>
+      <div id="membersList"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeModal('membersModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = "/api";
+    const token = localStorage.getItem("token");
+    if (!token) window.location.href = "/index.html";
+
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    document.getElementById("userName").textContent = user.name || "";
+    document.getElementById("userRole").textContent = user.role || "";
+
+    let currentProjectId = null;
+
+    function logout() { localStorage.clear(); window.location.href = "/index.html"; }
+    function authHeader() { return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }; }
+    function openModal(id)  { document.getElementById(id).classList.remove("hidden"); }
+    function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
+
+    function toast(msg, type = "success") {
+      const t = document.createElement("div");
+      t.className = `toast ${type}`;
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 3000);
+    }
+
+    async function loadProjects() {
+      const res = await fetch(`${API}/projects`, { headers: authHeader() });
+      if (res.status === 401) return logout();
+      const projects = await res.json();
+      const container = document.getElementById("projectsList");
+
+      if (!projects.length) {
+        container.innerHTML = `<p style="color:var(--muted)">No projects yet. Create one!</p>`;
+        return;
+      }
+
+      container.innerHTML = projects.map(p => `
+        <div class="card" style="position:relative">
+          <h3 style="margin-bottom:6px">${p.name}</h3>
+          <p style="margin-bottom:14px">${p.description || "No description"}</p>
+          <p style="font-size:.78rem;color:var(--muted);margin-bottom:14px">
+            Owner: ${p.owner?.name} &nbsp;|&nbsp; ${p.members?.length || 0} member(s)
+          </p>
+          <div class="flex gap-1">
+            <a href="/tasks.html?project=${p._id}&name=${encodeURIComponent(p.name)}" class="btn btn-primary btn-sm">📋 Tasks</a>
+            ${p.owner?._id === user._id ? `
+              <button class="btn btn-ghost btn-sm" onclick="openMembers('${p._id}')">👥 Members</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteProject('${p._id}')">🗑</button>
+            ` : ""}
+          </div>
+        </div>
+      `).join("");
+    }
+
+    async function createProject() {
+      const name = document.getElementById("pName").value.trim();
+      const description = document.getElementById("pDesc").value.trim();
+      if (!name) return toast("Project name required", "error");
+
+      const res = await fetch(`${API}/projects`, {
+        method: "POST",
+        headers: authHeader(),
+        body: JSON.stringify({ name, description }),
+      });
+      const data = await res.json();
+      if (!res.ok) return toast(data.message, "error");
+
+      toast("Project created!");
+      closeModal("createModal");
+      document.getElementById("pName").value = "";
+      document.getElementById("pDesc").value = "";
+      loadProjects();
+    }
+
+    async function deleteProject(id) {
+      if (!confirm("Delete this project and all its tasks?")) return;
+      const res = await fetch(`${API}/projects/${id}`, { method: "DELETE", headers: authHeader() });
+      const data = await res.json();
+      if (!res.ok) return toast(data.message, "error");
+      toast("Project deleted");
+      loadProjects();
+    }
+
+    async function openMembers(projectId) {
+      currentProjectId = projectId;
+      document.getElementById("memberSearch").value = "";
+      document.getElementById("searchResults").innerHTML = "";
+      openModal("membersModal");
+      await loadMembers();
+    }
+
+    async function loadMembers() {
+      const res = await fetch(`${API}/projects/${currentProjectId}`, { headers: authHeader() });
+      const project = await res.json();
+      document.getElementById("membersList").innerHTML = project.members?.map(m => `
+        <div class="flex gap-1" style="align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+          <span style="flex:1">${m.user?.name} <small style="color:var(--muted)">${m.user?.email}</small></span>
+          <span class="badge" style="background:var(--bg)">${m.role}</span>
+          ${project.owner._id !== m.user?._id ? `
+            <button class="btn btn-danger btn-sm" onclick="removeMember('${m.user?._id}')">Remove</button>
+          ` : '<span style="font-size:.75rem;color:var(--muted)">Owner</span>'}
+        </div>
+      `).join("") || "<p style='color:var(--muted)'>No members</p>";
+    }
+
+    let searchTimeout;
+    async function searchUsers() {
+      clearTimeout(searchTimeout);
+      const q = document.getElementById("memberSearch").value.trim();
+      if (q.length < 2) { document.getElementById("searchResults").innerHTML = ""; return; }
+      searchTimeout = setTimeout(async () => {
+        const res = await fetch(`${API}/users/search?q=${encodeURIComponent(q)}`, { headers: authHeader() });
+        const users = await res.json();
+        document.getElementById("searchResults").innerHTML = users.map(u => `
+          <div class="flex gap-1" style="align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+            <span style="flex:1">${u.name} <small style="color:var(--muted)">${u.email}</small></span>
+            <button class="btn btn-primary btn-sm" onclick="addMember('${u._id}')">Add</button>
+          </div>
+        `).join("") || "<p style='color:var(--muted);font-size:.85rem'>No users found</p>";
+      }, 300);
+    }
+
+    async function addMember(userId) {
+      const res = await fetch(`${API}/projects/${currentProjectId}/members`, {
+        method: "POST", headers: authHeader(),
+        body: JSON.stringify({ userId, role: "member" }),
+      });
+      const data = await res.json();
+      if (!res.ok) return toast(data.message, "error");
+      toast("Member added!");
+      document.getElementById("memberSearch").value = "";
+      document.getElementById("searchResults").innerHTML = "";
+      loadMembers();
+    }
+
+    async function removeMember(userId) {
+      const res = await fetch(`${API}/projects/${currentProjectId}/members/${userId}`, {
+        method: "DELETE", headers: authHeader(),
+      });
+      if (!res.ok) return toast("Error removing member", "error");
+      toast("Member removed");
+      loadMembers();
+    }
+
+    loadProjects();
+  </script>
+</body>
+</html>
